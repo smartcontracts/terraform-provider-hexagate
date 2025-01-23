@@ -19,11 +19,7 @@ builds:
     goarch:
       - amd64
       - arm64
-      - '386'
       - arm
-    ignore:
-      - goos: darwin
-        goarch: 386
 
 archives:
   - format: zip
@@ -31,9 +27,9 @@ archives:
       - none*
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_
-      {{- title .Os }}_
-      {{- if eq .Arch "amd64" }}x86_64
-      {{- else if eq .Arch "386" }}i386
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}amd64
+      {{- else if eq .Arch "arm64" }}arm64
       {{- else }}{{ .Arch }}{{ end }}
 
 checksum:
