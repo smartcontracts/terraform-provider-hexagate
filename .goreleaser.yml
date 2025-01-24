@@ -22,7 +22,7 @@ builds:
       - arm
 
 archives:
-  - format: zip
+  - formats: zip
     files:
       - none*
     name_template: >-
