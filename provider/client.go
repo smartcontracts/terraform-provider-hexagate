@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 )
 
@@ -38,8 +37,6 @@ func (c *HexagateClient) CreateMonitor(monitor map[string]interface{}) (*CreateM
 	if err != nil {
 		return nil, err
 	}
-
-	log.Printf("[DEBUG] Creating monitor: %s", string(body))
 
 	req, err := http.NewRequest("POST", fmt.Sprintf("%s/monitoring/user_monitors/", c.BaseURL), bytes.NewBuffer(body))
 	if err != nil {
@@ -98,9 +95,6 @@ func (c *HexagateClient) UpdateMonitor(id int, monitor map[string]interface{}) e
 	if err != nil {
 		return err
 	}
-
-	// log the monitor so I can see it
-	log.Printf("[DEBUG] Updating monitor: %s", string(body))
 
 	req, err := http.NewRequest("PUT", fmt.Sprintf("%s/monitoring/user_monitors/%d", c.BaseURL, id), bytes.NewBuffer(body))
 	if err != nil {

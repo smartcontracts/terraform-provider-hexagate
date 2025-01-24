@@ -401,8 +401,6 @@ func (r *MonitorResource) read(ctx context.Context, state *MonitorResourceModel)
 		state.Params = types.StringValue(string(params))
 	}
 
-	log.Printf("[DEBUG] Monitor: %+v", monitor)
-
 	return diags
 }
 
@@ -546,9 +544,6 @@ func monitorFromModel(ctx context.Context, model MonitorResourceModel) map[strin
 		"monitor_tags":  []interface{}{},
 		"entities_tags": []interface{}{},
 	}
-
-	// log the monitor
-	log.Printf("[DEBUG] Monitor: %+v", monitor)
 
 	if !model.ID.IsNull() && model.ID.ValueString() != "" {
 		monitor["id"] = model.ID.ValueString()
