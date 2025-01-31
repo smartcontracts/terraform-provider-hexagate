@@ -62,7 +62,7 @@ type MonitorRuleModel struct {
 	Type       types.String `tfsdk:"type"`
 	Threshold  types.Int64  `tfsdk:"threshold"`
 	Categories types.List   `tfsdk:"categories"`
-	Channels   types.List   `tfsdk:"channels"`
+	Channels   types.Set    `tfsdk:"channels"`
 }
 
 // ChannelModel describes a channel in a monitor rule.
@@ -353,7 +353,7 @@ func (r *MonitorResource) read(ctx context.Context, state *MonitorResourceModel)
 				categoryValues[i] = types.Int64Value(cat)
 			}
 
-			channelsValue, diags := types.ListValueFrom(ctx, types.ObjectType{
+			channelsValue, diags := types.SetValueFrom(ctx, types.ObjectType{
 				AttrTypes: map[string]attr.Type{
 					"id":     types.Int64Type,
 					"name":   types.StringType,
@@ -380,7 +380,7 @@ func (r *MonitorResource) read(ctx context.Context, state *MonitorResourceModel)
 				"type":       types.StringType,
 				"threshold":  types.Int64Type,
 				"categories": types.ListType{ElemType: types.Int64Type},
-				"channels": types.ListType{
+				"channels": types.SetType{
 					ElemType: types.ObjectType{
 						AttrTypes: map[string]attr.Type{
 							"id":     types.Int64Type,
@@ -446,7 +446,7 @@ func (r *MonitorResource) Update(ctx context.Context, req resource.UpdateRequest
 				"type":       types.StringType,
 				"threshold":  types.Int64Type,
 				"categories": types.ListType{ElemType: types.Int64Type},
-				"channels": types.ListType{
+				"channels": types.SetType{
 					ElemType: types.ObjectType{
 						AttrTypes: map[string]attr.Type{
 							"id":     types.Int64Type,
