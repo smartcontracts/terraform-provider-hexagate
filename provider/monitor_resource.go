@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -339,6 +340,11 @@ func (r *MonitorResource) read(ctx context.Context, state *MonitorResourceModel)
 				}
 			}
 
+			// Sort channels by ID
+			sort.Slice(channels, func(i, j int) bool {
+				return channels[i].ID.ValueInt64() < channels[j].ID.ValueInt64()
+			})
+
 			// Convert categories
 			categories := make([]int64, 0)
 			if cats, ok := ruleMap["categories"].([]interface{}); ok {
@@ -590,6 +596,11 @@ func monitorFromModel(ctx context.Context, model MonitorResourceModel) map[strin
 		for i, rule := range rules {
 			var channels []ChannelModel
 			rule.Channels.ElementsAs(ctx, &channels, false)
+
+			// Sort channels by ID
+			sort.Slice(channels, func(i, j int) bool {
+				return channels[i].ID.ValueInt64() < channels[j].ID.ValueInt64()
+			})
 
 			apiChannels := make([]map[string]interface{}, len(channels))
 			for j, channel := range channels {
