@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"sort"
 	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -23,7 +22,6 @@ var (
 	_ resource.Resource                = &MonitorResource{}
 	_ resource.ResourceWithConfigure   = &MonitorResource{}
 	_ resource.ResourceWithImportState = &MonitorResource{}
-	_ resource.ResourceWithModifyPlan  = &MonitorResource{}
 )
 
 // NewMonitorResource is a helper function to simplify the provider implementation.
@@ -179,7 +177,7 @@ func (r *MonitorResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 						},
 					},
 					Blocks: map[string]schema.Block{
-						"channels": schema.ListNestedBlock{
+						"channels": schema.SetNestedBlock{
 							Description: "The notification channels for the rule",
 							NestedObject: schema.NestedBlockObject{
 								Attributes: map[string]schema.Attribute{
@@ -642,104 +640,4 @@ func monitorFromModel(ctx context.Context, model MonitorResourceModel) map[strin
 	}
 
 	return monitor
-}
-
-// ModifyPlan is called by the Terraform Plugin Framework so the provider
-// can make final changes to the plan before it’s shown/applied. Here,
-// we sort the nested "channels" list by "id" to avoid plan diffs.
-func (r *MonitorResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	var plan MonitorResourceModel
-
-	// 1. Read the planned data into our plan struct.
-	diags := req.Plan.Get(ctx, &plan)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// 2. If MonitorRules is either null or unknown, we cannot do anything.
-	if plan.MonitorRules.IsNull() || plan.MonitorRules.IsUnknown() {
-		return
-	}
-
-	// 3. Convert the plan's MonitorRules to a Go slice.
-	var rules []MonitorRuleModel
-	diags = plan.MonitorRules.ElementsAs(ctx, &rules, false)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// 4. For each rule, if channels is known and not null, sort the channels by ID.
-	for i := range rules {
-		// Skip if channels is null/unknown.
-		if rules[i].Channels.IsNull() || rules[i].Channels.IsUnknown() {
-			continue
-		}
-
-		var channels []ChannelModel
-		diags = rules[i].Channels.ElementsAs(ctx, &channels, false)
-		resp.Diagnostics.Append(diags...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-
-		// Sort channels by ID ascending.
-		sort.Slice(channels, func(a, b int) bool {
-			return channels[a].ID.ValueInt64() < channels[b].ID.ValueInt64()
-		})
-
-		// Convert channels slice back to a Terraform list of objects.
-		channelsValue, diags := types.ListValueFrom(ctx,
-			types.ObjectType{
-				AttrTypes: map[string]attr.Type{
-					"id":     types.Int64Type,
-					"name":   types.StringType,
-					"params": types.StringType,
-				},
-			},
-			channels,
-		)
-		resp.Diagnostics.Append(diags...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-
-		// Update the rule’s Channels field.
-		rules[i].Channels = channelsValue
-	}
-
-	// 5. Convert the sorted rules slice back into a Terraform list of objects.
-	sortedRules, diags := types.ListValueFrom(ctx,
-		types.ObjectType{
-			AttrTypes: map[string]attr.Type{
-				"id":         types.Int64Type,
-				"name":       types.StringType,
-				"type":       types.StringType,
-				"threshold":  types.Int64Type,
-				"categories": types.ListType{ElemType: types.Int64Type},
-				"channels": types.ListType{
-					ElemType: types.ObjectType{
-						AttrTypes: map[string]attr.Type{
-							"id":     types.Int64Type,
-							"name":   types.StringType,
-							"params": types.StringType,
-						},
-					},
-				},
-			},
-		},
-		rules,
-	)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// 6. Update the plan's MonitorRules field with the newly sorted list.
-	plan.MonitorRules = sortedRules
-
-	// 7. Finally, set the modified plan back to Terraform.
-	diags = resp.Plan.Set(ctx, plan)
-	resp.Diagnostics.Append(diags...)
 }
