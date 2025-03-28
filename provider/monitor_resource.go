@@ -171,6 +171,9 @@ func (r *MonitorResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 						"threshold": schema.Int64Attribute{
 							Required: true,
 						},
+						"notification_period": schema.Int64Attribute{
+							Optional: true,
+						},
 						"categories": schema.ListAttribute{
 							Required:    true,
 							ElementType: types.Int64Type,
