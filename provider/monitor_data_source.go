@@ -101,6 +101,10 @@ func (d *MonitorDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 							Computed:    true,
 							Description: "The threshold for the rule.",
 						},
+						"notification_period": schema.Int64Attribute{
+							Computed:    true,
+							Description: "The notification period for the rule.",
+						},
 						"categories": schema.ListAttribute{
 							Computed:    true,
 							Description: "The categories for the rule.",

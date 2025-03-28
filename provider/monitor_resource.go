@@ -57,12 +57,13 @@ type EntityModel struct {
 
 // MonitorRuleModel describes a rule in the monitor.
 type MonitorRuleModel struct {
-	ID         types.Int64  `tfsdk:"id"`
-	Name       types.String `tfsdk:"name"`
-	Type       types.String `tfsdk:"type"`
-	Threshold  types.Int64  `tfsdk:"threshold"`
-	Categories types.List   `tfsdk:"categories"`
-	Channels   types.Set    `tfsdk:"channels"`
+	ID                 types.Int64  `tfsdk:"id"`
+	Name               types.String `tfsdk:"name"`
+	Type               types.String `tfsdk:"type"`
+	Threshold          types.Int64  `tfsdk:"threshold"`
+	NotificationPeriod types.Int64  `tfsdk:"notification_period"`
+	Categories         types.List   `tfsdk:"categories"`
+	Channels           types.Set    `tfsdk:"channels"`
 }
 
 // ChannelModel describes a channel in a monitor rule.
@@ -368,21 +369,28 @@ func (r *MonitorResource) read(ctx context.Context, state *MonitorResourceModel)
 			}
 
 			rules[i] = MonitorRuleModel{
-				ID:         types.Int64Value(ruleID),
-				Name:       types.StringValue(ruleMap["name"].(string)),
-				Type:       types.StringValue("notification"),
-				Threshold:  types.Int64Value(int64(ruleMap["threshold"].(float64))),
-				Categories: types.ListValueMust(types.Int64Type, categoryValues),
-				Channels:   channelsValue,
+				ID:        types.Int64Value(ruleID),
+				Name:      types.StringValue(ruleMap["name"].(string)),
+				Type:      types.StringValue("notification"),
+				Threshold: types.Int64Value(int64(ruleMap["threshold"].(float64))),
 			}
+
+			// Set notification_period if it exists in the response
+			if notificationPeriod, ok := ruleMap["notification_period"].(float64); ok {
+				rules[i].NotificationPeriod = types.Int64Value(int64(notificationPeriod))
+			}
+
+			rules[i].Categories = types.ListValueMust(types.Int64Type, categoryValues)
+			rules[i].Channels = channelsValue
 		}
 		state.MonitorRules, diags = types.ListValueFrom(ctx, types.ObjectType{
 			AttrTypes: map[string]attr.Type{
-				"id":         types.Int64Type,
-				"name":       types.StringType,
-				"type":       types.StringType,
-				"threshold":  types.Int64Type,
-				"categories": types.ListType{ElemType: types.Int64Type},
+				"id":                  types.Int64Type,
+				"name":                types.StringType,
+				"type":                types.StringType,
+				"threshold":           types.Int64Type,
+				"notification_period": types.Int64Type,
+				"categories":          types.ListType{ElemType: types.Int64Type},
 				"channels": types.SetType{
 					ElemType: types.ObjectType{
 						AttrTypes: map[string]attr.Type{
@@ -444,11 +452,12 @@ func (r *MonitorResource) Update(ctx context.Context, req resource.UpdateRequest
 		// Create a proper object type for monitor rules
 		monitorRuleObject := types.ObjectType{
 			AttrTypes: map[string]attr.Type{
-				"id":         types.Int64Type,
-				"name":       types.StringType,
-				"type":       types.StringType,
-				"threshold":  types.Int64Type,
-				"categories": types.ListType{ElemType: types.Int64Type},
+				"id":                  types.Int64Type,
+				"name":                types.StringType,
+				"type":                types.StringType,
+				"threshold":           types.Int64Type,
+				"notification_period": types.Int64Type,
+				"categories":          types.ListType{ElemType: types.Int64Type},
 				"channels": types.SetType{
 					ElemType: types.ObjectType{
 						AttrTypes: map[string]attr.Type{
@@ -622,6 +631,11 @@ func monitorFromModel(ctx context.Context, model MonitorResourceModel) map[strin
 				"threshold":  rule.Threshold.ValueInt64(),
 				"categories": categories,
 				"channels":   apiChannels,
+			}
+
+			// Add notification_period if not null
+			if !rule.NotificationPeriod.IsNull() {
+				apiRules[i]["notification_period"] = rule.NotificationPeriod.ValueInt64()
 			}
 
 			if !rule.ID.IsNull() && rule.ID.ValueInt64() != 0 {
