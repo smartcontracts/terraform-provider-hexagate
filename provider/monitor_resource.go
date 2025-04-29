@@ -848,10 +848,6 @@ func monitorFromModel(ctx context.Context, model MonitorResourceModel) map[strin
 			return nil
 		}
 		monitor["params"] = params
-	} else {
-		// If params is null or unknown in the model, don't include it in the API request map.
-		// The API might interpret absence differently than `null` or `{}`.
-		// Assuming absence means "no change" or "use default".
 	}
 
 	return monitor
