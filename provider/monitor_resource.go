@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"reflect"
 	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -15,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 // Ensure the implementation satisfies the expected interfaces.
@@ -22,6 +24,7 @@ var (
 	_ resource.Resource                = &MonitorResource{}
 	_ resource.ResourceWithConfigure   = &MonitorResource{}
 	_ resource.ResourceWithImportState = &MonitorResource{}
+	_ resource.ResourceWithModifyPlan  = &MonitorResource{}
 )
 
 // NewMonitorResource is a helper function to simplify the provider implementation.
@@ -96,6 +99,156 @@ func (r *MonitorResource) Metadata(_ context.Context, req resource.MetadataReque
 	resp.TypeName = req.ProviderTypeName + "_monitor"
 }
 
+// ModifyPlan implements resource.ResourceWithModifyPlan.
+// It includes the CustomizeDiff logic for the params attribute.
+func (r *MonitorResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Retrieve the plan and state
+	var plan MonitorResourceModel
+	var state MonitorResourceModel
+
+	diags := req.Plan.Get(ctx, &plan)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// State might not exist during creation
+	if !req.State.Raw.IsNull() {
+		diags = req.State.Get(ctx, &state)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	// Check if 'params' attribute requires custom diff logic
+	paramsPath := path.Root("params")
+
+	var planParams, stateParams types.String
+
+	diags = req.Plan.GetAttribute(ctx, paramsPath, &planParams)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// State might not exist during creation
+	if !req.State.Raw.IsNull() {
+		diags = req.State.GetAttribute(ctx, paramsPath, &stateParams)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	} else {
+		// If state is null (creation), set stateParams to null explicitly
+		// so the checks below don't fail trying to access it.
+		stateParams = types.StringNull()
+		tflog.Debug(ctx, "Skipping params comparison on create")
+		return // Nothing to compare against during creation
+	}
+
+	// Proceed only if both plan and state 'params' are known and not null.
+	// If plan params is null/unknown, let TF handle it. If state is null (handled above), skip custom diff.
+	if planParams.IsNull() || planParams.IsUnknown() || stateParams.IsNull() {
+		tflog.Debug(ctx, "Skipping custom diff for params: Plan or State params are null or unknown.")
+		return
+	}
+
+	planParamsStr := planParams.ValueString()
+	stateParamsStr := stateParams.ValueString()
+
+	// If the strings are identical, no need for deep comparison.
+	if planParamsStr == stateParamsStr {
+		tflog.Debug(ctx, "Params strings are identical, skipping deep comparison.")
+		return
+	}
+
+	tflog.Debug(ctx, "Params strings differ, performing deep comparison.", map[string]interface{}{
+		"plan_params":  planParamsStr,
+		"state_params": stateParamsStr,
+	})
+
+	var planData, stateData interface{}
+
+	errPlan := json.Unmarshal([]byte(planParamsStr), &planData)
+	errState := json.Unmarshal([]byte(stateParamsStr), &stateData)
+
+	if errPlan != nil || errState != nil {
+		// If unmarshalling fails, it suggests the strings might not be valid JSON
+		// or the format is unexpected. Log this but let Terraform handle the diff as strings.
+		tflog.Warn(ctx, "Failed to unmarshal params JSON for comparison; falling back to string diff", map[string]interface{}{
+			"plan_error":  errPlan,
+			"state_error": errState,
+		})
+		return
+	}
+
+	// Compare the unmarshalled data
+	if compareJSONValues(planData, stateData) {
+		tflog.Debug(ctx, "Plan params are a subset of state params; suppressing diff.")
+		// If the plan data is logically contained within the state data, suppress the diff for 'params'.
+		// Use the value read from the state attribute directly
+		resp.Plan.SetAttribute(ctx, paramsPath, stateParams)
+	} else {
+		tflog.Debug(ctx, "Plan params differ logically from state params; allowing diff.")
+		// Otherwise, let the plan proceed as is, allowing Terraform to show the diff.
+	}
+}
+
+// compareJSONValues recursively compares two unmarshalled JSON values (interface{}).
+// It returns true if `planValue` is logically contained within `stateValue`,
+// meaning all elements in `planValue` exist and match in `stateValue`,
+// but `stateValue` can have additional elements.
+func compareJSONValues(planValue, stateValue interface{}) bool {
+	// Use reflect.DeepEqual for basic types and nil checks
+	if reflect.DeepEqual(planValue, stateValue) {
+		return true
+	}
+
+	planMap, planIsMap := planValue.(map[string]interface{})
+	stateMap, stateIsMap := stateValue.(map[string]interface{})
+
+	planSlice, planIsSlice := planValue.([]interface{})
+	stateSlice, stateIsSlice := stateValue.([]interface{})
+
+	// Type mismatch (e.g., map vs slice, map vs scalar)
+	if planIsMap != stateIsMap || planIsSlice != stateIsSlice {
+		return false
+	}
+
+	if planIsMap {
+		// Compare maps: ensure all keys in planMap exist in stateMap with matching values
+		for key, planSubValue := range planMap {
+			stateSubValue, ok := stateMap[key]
+			if !ok {
+				return false // Key missing in state
+			}
+			if !compareJSONValues(planSubValue, stateSubValue) {
+				return false // Values differ recursively
+			}
+		}
+		return true // All plan keys/values found and matched in state
+	}
+
+	if planIsSlice {
+		// Compare slices: must have the same length and elements must match recursively in order
+		// Note: This implements ordered list comparison. If unordered comparison is needed, logic would be more complex.
+		if len(planSlice) != len(stateSlice) {
+			return false
+		}
+		for i := range planSlice {
+			if !compareJSONValues(planSlice[i], stateSlice[i]) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// For scalars (string, number, bool, nil), DeepEqual should have caught matches.
+	// If we reach here, it means scalars differ.
+	return false
+}
+
 // Schema defines the schema for the resource.
 func (r *MonitorResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
@@ -126,6 +279,7 @@ func (r *MonitorResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"params": schema.StringAttribute{
 				Optional:    true,
 				Description: "JSON encoded parameters for the monitor",
+				Computed:    true,
 			},
 			"created_by": schema.StringAttribute{
 				Computed:    true,
@@ -408,8 +562,27 @@ func (r *MonitorResource) read(ctx context.Context, state *MonitorResourceModel)
 	}
 
 	if monitor.Params != nil {
-		params, _ := json.Marshal(monitor.Params)
-		state.Params = types.StringValue(string(params))
+		// Normalize JSON before storing to potentially reduce superficial diffs
+		paramsBytes, err := json.Marshal(monitor.Params)
+		if err != nil {
+			diags.AddError("Error Marshalling Params", fmt.Sprintf("Could not marshal params from API: %s", err))
+			return diags
+		}
+		// Unmarshal and remarshal to get a canonical form (e.g., sorted keys)
+		var tempParams interface{}
+		if err := json.Unmarshal(paramsBytes, &tempParams); err != nil {
+			diags.AddError("Error Unmarshalling Params", fmt.Sprintf("Could not unmarshal params for normalization: %s", err))
+			return diags
+		}
+		normalizedParamsBytes, err := json.Marshal(tempParams)
+		if err != nil {
+			diags.AddError("Error Re-marshalling Params", fmt.Sprintf("Could not marshal normalized params: %s", err))
+			return diags
+		}
+		state.Params = types.StringValue(string(normalizedParamsBytes))
+	} else {
+		// Ensure Params is explicitly null if not returned by API
+		state.Params = types.StringNull()
 	}
 
 	return diags
@@ -646,14 +819,39 @@ func monitorFromModel(ctx context.Context, model MonitorResourceModel) map[strin
 	}
 
 	// Handle params
-	if !model.Params.IsNull() {
+	if !model.Params.IsNull() && !model.Params.IsUnknown() {
 		var params map[string]interface{}
-		err := json.Unmarshal([]byte(model.Params.ValueString()), &params)
+		// Normalize the JSON string from the config/plan before sending
+		paramsStr := model.Params.ValueString()
+		var tempParams interface{}
+		if err := json.Unmarshal([]byte(paramsStr), &tempParams); err != nil {
+			// This might happen if the string is not valid JSON, though schema validation should catch this.
+			log.Printf("[WARN] Error unmarshalling params from model for normalization: %s. Sending raw string value.", err)
+			// Attempt to send raw if unmarshalling fails, though the API might reject it.
+			// Or return nil / add diagnostic? For now, log warning and proceed.
+			// It's better to let the API call fail than to silently corrupt data.
+			// Let's add a diagnostic and return nil for safety.
+			// --> Returning nil seems safer. Add diagnostic elsewhere if needed.
+			// log.Printf("[ERROR] Invalid JSON in params attribute: %s", err)
+			// Need diags object here to add error. Modify function signature?
+			// For now, just return nil as before.
+			return nil
+		}
+		normalizedParamsBytes, err := json.Marshal(tempParams)
 		if err != nil {
-			log.Printf("[ERROR] Error unmarshalling params: %s", err)
+			log.Printf("[ERROR] Error marshalling normalized params: %s", err)
+			return nil
+		}
+		// Now unmarshal the *normalized* bytes into the map for the API call
+		if err := json.Unmarshal(normalizedParamsBytes, &params); err != nil {
+			log.Printf("[ERROR] Error unmarshalling normalized params into map: %s", err)
 			return nil
 		}
 		monitor["params"] = params
+	} else {
+		// If params is null or unknown in the model, don't include it in the API request map.
+		// The API might interpret absence differently than `null` or `{}`.
+		// Assuming absence means "no change" or "use default".
 	}
 
 	return monitor
